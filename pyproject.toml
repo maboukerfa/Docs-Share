@@ -1,0 +1,18 @@
+[project]
+name = "scr"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "browser-cookie3>=0.20.1",
+    "python-dotenv>=1.0.1",
+    "requests>=2.32.5",
+]
+
+[tool.pytest.ini_options]
+addopts = "-v -m 'not integration'"
+testpaths = ["tests"]
+markers = [
+    "integration: tests that hit live external services (e.g. the local converter)",
+]
