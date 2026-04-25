@@ -214,6 +214,7 @@ def test_upload_and_convert_pipeline(tmp_path):
 
     with patch.object(main, "get_browser_session", return_value=("cookies", "csrf")) as gs, \
          patch.object(main, "upload_local_images", return_value="# hi rewritten") as ui, \
+         patch.object(main, "generate_excerpt", return_value="my excerpt") as ge, \
          patch.object(main, "convert_markdown", return_value=b"yjs") as cm, \
          patch.object(main, "upload_document", return_value="doc-id") as ud, \
          patch.object(main, "move_document") as mv:
@@ -223,8 +224,11 @@ def test_upload_and_convert_pipeline(tmp_path):
     ui.assert_called_once()
     assert ui.call_args.args[0] == "# hi"
     assert ui.call_args.args[2] == "parent-x"
+    ge.assert_called_once_with("# hi rewritten")
     cm.assert_called_once_with("# hi rewritten")
-    ud.assert_called_once_with(b"yjs", "My title", "parent-x", "cookies", "csrf")
+    ud.assert_called_once_with(
+        b"yjs", "My title", "parent-x", "cookies", "csrf", excerpt="my excerpt"
+    )
     mv.assert_called_once_with("doc-id", "parent-x", "cookies", "csrf")
 
 
@@ -234,6 +238,7 @@ def test_upload_and_convert_skips_move_when_upload_fails(tmp_path):
 
     with patch.object(main, "get_browser_session", return_value=("c", "t")), \
          patch.object(main, "upload_local_images", return_value="x"), \
+         patch.object(main, "generate_excerpt", return_value=None), \
          patch.object(main, "convert_markdown", return_value=b"y"), \
          patch.object(main, "upload_document", return_value=None), \
          patch.object(main, "move_document") as mv:

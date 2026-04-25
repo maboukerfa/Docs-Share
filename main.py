@@ -17,6 +17,10 @@ CONVERT_URL = os.getenv("CONVERT_URL", "http://localhost:4444/api/convert/")
 CONVERT_API_KEY = os.getenv("CONVERT_API_KEY", "yprovider-api-key")
 DEFAULT_PARENT_ID = os.getenv("DEFAULT_PARENT_ID", "98709bd3-7458-4b60-90dd-7a58bef2abcf")
 
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "openai/gpt-oss-120b")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://albert.api.etalab.gouv.fr/v1")
+EXCERPT_MAX_CHARS = int(os.getenv("EXCERPT_MAX_CHARS", "300"))
+
 IMG_PATTERNS = [
     r'!\[\[(.*?)\]\]',        # Obsidian style
     r'!\[.*?\]\((.*?)\)',     # Standard Markdown style
@@ -108,6 +112,47 @@ def upload_local_images(markdown_text, base_dir, parent_id, cookies, csrf_token)
     return markdown_text
 
 
+def generate_excerpt(markdown_text, max_chars=EXCERPT_MAX_CHARS):
+    """Generate a short excerpt of the document via OpenAI.
+
+    Best-effort: returns None if no API key is set or if the call fails, so
+    upload still proceeds without an excerpt.
+    """
+    if not os.getenv("OPENAI_API_KEY"):
+        print("Skipping excerpt: OPENAI_API_KEY not set.")
+        return None
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        print("Skipping excerpt: openai package not installed.")
+        return None
+
+    print("Generating excerpt...")
+    try:
+        client = OpenAI(base_url=OPENAI_BASE_URL, api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"Summarize the following document in at most 50 words. "
+                        "Return only the summary, no preamble or quotes. "
+                        "Focus on the main topic and key points, and ignore minor details."
+                    ),
+                },
+                {"role": "user", "content": markdown_text},
+            ],
+        )
+        excerpt = (response.choices[0].message.content or "").strip()
+    except Exception as e:
+        print(f"Failed to generate excerpt: {e}")
+        return None
+
+    return excerpt[:max_chars] if excerpt else None
+
+
 def convert_markdown(markdown_text):
     """Send markdown to the local converter and return the binary yjs document."""
     print("Step 1: Converting document...")
@@ -126,7 +171,7 @@ def convert_markdown(markdown_text):
     return response.content
 
 
-def upload_document(converted_bytes, title, parent_id, cookies, csrf_token):
+def upload_document(converted_bytes, title, parent_id, cookies, csrf_token, excerpt=None):
     """Create a new document under `parent_id` from the converted bytes. Returns its id or None."""
     print("Step 2: Uploading converted document...")
     url = f"{DOCS_BASE_URL}/api/v1.0/documents/{parent_id}/children/"
@@ -141,6 +186,8 @@ def upload_document(converted_bytes, title, parent_id, cookies, csrf_token):
         "link_role": "reader",
         "content": base64.b64encode(converted_bytes).decode("utf-8"),
     }
+    if excerpt:
+        data["excerpt"] = excerpt
 
     response = requests.post(url, headers=headers, cookies=cookies, json=data)
 
@@ -197,9 +244,12 @@ def upload_and_convert(file_path, document_title, parent_id=DEFAULT_PARENT_ID):
     cookies, csrf_token = get_browser_session()
 
     markdown_text = upload_local_images(markdown_text, base_dir, parent_id, cookies, csrf_token)
+    excerpt = generate_excerpt(markdown_text)
     converted_bytes = convert_markdown(markdown_text)
 
-    doc_id = upload_document(converted_bytes, document_title, parent_id, cookies, csrf_token)
+    doc_id = upload_document(
+        converted_bytes, document_title, parent_id, cookies, csrf_token, excerpt=excerpt
+    )
     if doc_id:
         move_document(doc_id, parent_id, cookies, csrf_token)
 
