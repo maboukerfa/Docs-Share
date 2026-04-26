@@ -171,7 +171,7 @@ def convert_markdown(markdown_text):
     return response.content
 
 
-def upload_document(converted_bytes, title, parent_id, cookies, csrf_token, excerpt=None):
+def upload_document(converted_bytes, title, parent_id, cookies, csrf_token, excerpt=None, doc_id=None):
     """Create a new document under `parent_id` from the converted bytes. Returns its id or None."""
     print("Step 2: Uploading converted document...")
     url = f"{DOCS_BASE_URL}/api/v1.0/documents/{parent_id}/children/"
@@ -188,6 +188,8 @@ def upload_document(converted_bytes, title, parent_id, cookies, csrf_token, exce
     }
     if excerpt:
         data["excerpt"] = excerpt
+    if doc_id:
+        data["id"] = doc_id
 
     response = requests.post(url, headers=headers, cookies=cookies, json=data)
 
@@ -235,7 +237,7 @@ def move_document(doc_id, parent_id, cookies, csrf_token, position="first-child"
         print(response.text)
 
 
-def upload_and_convert(file_path, document_title, parent_id=DEFAULT_PARENT_ID):
+def upload_and_convert(file_path, document_title, parent_id=DEFAULT_PARENT_ID, doc_id=None):
     file_path = os.path.expanduser(file_path)
     base_dir = os.path.dirname(os.path.abspath(file_path))
     markdown_text = read_markdown(file_path)
@@ -247,19 +249,22 @@ def upload_and_convert(file_path, document_title, parent_id=DEFAULT_PARENT_ID):
     excerpt = generate_excerpt(markdown_text)
     converted_bytes = convert_markdown(markdown_text)
 
-    doc_id = upload_document(
-        converted_bytes, document_title, parent_id, cookies, csrf_token, excerpt=excerpt
+    new_doc_id = upload_document(
+        converted_bytes, document_title, parent_id, cookies, csrf_token,
+        excerpt=excerpt, doc_id=doc_id,
     )
-    if doc_id:
-        move_document(doc_id, parent_id, cookies, csrf_token)
+    if new_doc_id:
+        move_document(new_doc_id, parent_id, cookies, csrf_token)
 
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python main.py <path_to_markdown_file> <document_title>")
+        print("Usage: python main.py <path_to_markdown_file> <document_title> [parent_id] [doc_id]")
         sys.exit(1)
 
-    upload_and_convert(sys.argv[1], sys.argv[2])
+    parent_id = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else DEFAULT_PARENT_ID
+    doc_id = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else None
+    upload_and_convert(sys.argv[1], sys.argv[2], parent_id, doc_id)
 
 
 if __name__ == "__main__":
