@@ -17,3 +17,8 @@ testpaths = ["tests"]
 markers = [
     "integration: tests that hit live external services (e.g. the local converter)",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

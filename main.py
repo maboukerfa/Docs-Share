@@ -155,7 +155,7 @@ def generate_excerpt(markdown_text, max_chars=EXCERPT_MAX_CHARS):
 
 def convert_markdown(markdown_text):
     """Send markdown to the local converter and return the binary yjs document."""
-    print("Step 1: Converting document...")
+    print("Step 1: Converting markdown to yjs...")
     headers = {
         "Authorization": f"Bearer {CONVERT_API_KEY}",
         "Content-Type": "text/markdown",
@@ -171,9 +171,13 @@ def convert_markdown(markdown_text):
     return response.content
 
 
-def upload_document(converted_bytes, title, parent_id, cookies, csrf_token, excerpt=None, doc_id=None):
-    """Create a new document under `parent_id` from the converted bytes. Returns its id or None."""
-    print("Step 2: Uploading converted document...")
+def create_document(title, parent_id, cookies, csrf_token, excerpt=None, doc_id=None):
+    """Create a new (empty) document under `parent_id`. Returns its id or None.
+
+    Since v5.0, `content` is no longer accepted on this endpoint — the content
+    must be set in a separate PATCH to `/documents/{id}/content/`.
+    """
+    print("Step 2: Creating document...")
     url = f"{DOCS_BASE_URL}/api/v1.0/documents/{parent_id}/children/"
     headers = {
         "X-CSRFToken": csrf_token,
@@ -184,7 +188,6 @@ def upload_document(converted_bytes, title, parent_id, cookies, csrf_token, exce
         "title": title,
         "link_reach": "public",
         "link_role": "reader",
-        "content": base64.b64encode(converted_bytes).decode("utf-8"),
     }
     if excerpt:
         data["excerpt"] = excerpt
@@ -194,7 +197,7 @@ def upload_document(converted_bytes, title, parent_id, cookies, csrf_token, exce
     response = requests.post(url, headers=headers, cookies=cookies, json=data)
 
     if response.status_code not in (200, 201):
-        print(f"Failed to upload document. Status code: {response.status_code}")
+        print(f"Failed to create document. Status code: {response.status_code}")
         print(response.text)
         if response.status_code in (401, 403):
             print(f"Tip: Make sure you are logged in to {DOCS_BASE_URL} in your Brave browser.")
@@ -203,24 +206,45 @@ def upload_document(converted_bytes, title, parent_id, cookies, csrf_token, exce
     try:
         result = response.json()
     except requests.exceptions.JSONDecodeError:
-        print("Successfully uploaded!")
+        print("Document created, but response was not JSON.")
         print("Response:", response.text)
         return None
 
-    doc_id = result.get("id")
-    if not doc_id:
-        print("Successfully uploaded, but ID not found in response.")
+    new_doc_id = result.get("id")
+    if not new_doc_id:
+        print("Document created, but ID not found in response.")
         print("Response:", result)
         return None
 
-    print("Successfully uploaded! Access your document at:")
-    print(f"{DOCS_BASE_URL}/docs/{doc_id}")
-    return doc_id
+    print(f"Document created: {DOCS_BASE_URL}/docs/{new_doc_id}")
+    return new_doc_id
+
+
+def update_document_content(doc_id, converted_bytes, cookies, csrf_token):
+    """Set the raw yjs content of `doc_id` (v5.0+ endpoint). Returns True on success."""
+    print("Step 3: Uploading document content...")
+    url = f"{DOCS_BASE_URL}/api/v1.0/documents/{doc_id}/content/"
+    headers = {
+        "X-CSRFToken": csrf_token,
+        "Referer": f"{DOCS_BASE_URL}/docs/{doc_id}/",
+        "Content-Type": "application/json",
+    }
+    data = {"content": base64.b64encode(converted_bytes).decode("utf-8")}
+
+    response = requests.patch(url, headers=headers, cookies=cookies, json=data)
+
+    if response.status_code not in (200, 204):
+        print(f"Failed to set document content. Status code: {response.status_code}")
+        print(response.text)
+        return False
+
+    print("Content uploaded successfully.")
+    return True
 
 
 def move_document(doc_id, parent_id, cookies, csrf_token, position="first-child"):
     """Move `doc_id` under `parent_id` at the given position."""
-    print(f"Step 3: Moving document to {position} position...")
+    print(f"Step 4: Moving document to {position} position...")
     url = f"{DOCS_BASE_URL}/api/v1.0/documents/{doc_id}/move/"
     headers = {
         "X-CSRFToken": csrf_token,
@@ -249,12 +273,16 @@ def upload_and_convert(file_path, document_title, parent_id=DEFAULT_PARENT_ID, d
     excerpt = generate_excerpt(markdown_text)
     converted_bytes = convert_markdown(markdown_text)
 
-    new_doc_id = upload_document(
-        converted_bytes, document_title, parent_id, cookies, csrf_token,
+    new_doc_id = create_document(
+        document_title, parent_id, cookies, csrf_token,
         excerpt=excerpt, doc_id=doc_id,
     )
-    if new_doc_id:
-        move_document(new_doc_id, parent_id, cookies, csrf_token)
+    if not new_doc_id:
+        return
+
+    if update_document_content(new_doc_id, converted_bytes, cookies, csrf_token):
+        print(f"Access your document at: {DOCS_BASE_URL}/docs/{new_doc_id}")
+    move_document(new_doc_id, parent_id, cookies, csrf_token)
 
 
 def main():

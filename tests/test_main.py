@@ -161,30 +161,52 @@ def test_convert_markdown_exits_on_failure():
             main.convert_markdown("x")
 
 
-# ---------- upload_document ----------
+# ---------- create_document ----------
 
-def test_upload_document_returns_id_and_sends_base64():
-    payload = b"hello"
+def test_create_document_returns_id_and_does_not_send_content():
     response = make_response(status_code=201, json_data={"id": "new-doc-id"})
     with patch.object(main.requests, "post", return_value=response) as post:
-        doc_id = main.upload_document(payload, "Title", "parent", "c", "tok")
+        doc_id = main.create_document("Title", "parent", "c", "tok", excerpt="e")
     assert doc_id == "new-doc-id"
-    _, kwargs = post.call_args
+    args, kwargs = post.call_args
+    assert "parent/children" in args[0]
     assert kwargs["json"]["title"] == "Title"
-    assert kwargs["json"]["content"] == base64.b64encode(payload).decode("utf-8")
+    assert kwargs["json"]["excerpt"] == "e"
+    assert "content" not in kwargs["json"]
     assert kwargs["headers"]["X-CSRFToken"] == "tok"
 
 
-def test_upload_document_returns_none_on_failure():
+def test_create_document_returns_none_on_failure():
     response = make_response(status_code=403, text="nope")
     with patch.object(main.requests, "post", return_value=response):
-        assert main.upload_document(b"x", "T", "p", "c", "t") is None
+        assert main.create_document("T", "p", "c", "t") is None
 
 
-def test_upload_document_returns_none_when_id_missing():
+def test_create_document_returns_none_when_id_missing():
     response = make_response(status_code=200, json_data={"foo": "bar"})
     with patch.object(main.requests, "post", return_value=response):
-        assert main.upload_document(b"x", "T", "p", "c", "t") is None
+        assert main.create_document("T", "p", "c", "t") is None
+
+
+# ---------- update_document_content ----------
+
+def test_update_document_content_patches_base64_payload():
+    payload = b"hello"
+    response = make_response(status_code=204)
+    with patch.object(main.requests, "patch", return_value=response) as patch_call:
+        ok = main.update_document_content("doc-id", payload, "c", "tok")
+    assert ok is True
+    args, kwargs = patch_call.call_args
+    assert "doc-id/content" in args[0]
+    assert kwargs["json"] == {"content": base64.b64encode(payload).decode("utf-8")}
+    assert kwargs["headers"]["X-CSRFToken"] == "tok"
+    assert kwargs["headers"]["Content-Type"] == "application/json"
+
+
+def test_update_document_content_returns_false_on_failure():
+    response = make_response(status_code=400, text="bad")
+    with patch.object(main.requests, "patch", return_value=response):
+        assert main.update_document_content("d", b"x", "c", "t") is False
 
 
 # ---------- move_document ----------
@@ -216,7 +238,8 @@ def test_upload_and_convert_pipeline(tmp_path):
          patch.object(main, "upload_local_images", return_value="# hi rewritten") as ui, \
          patch.object(main, "generate_excerpt", return_value="my excerpt") as ge, \
          patch.object(main, "convert_markdown", return_value=b"yjs") as cm, \
-         patch.object(main, "upload_document", return_value="doc-id") as ud, \
+         patch.object(main, "create_document", return_value="doc-id") as cd, \
+         patch.object(main, "update_document_content", return_value=True) as uc, \
          patch.object(main, "move_document") as mv:
         main.upload_and_convert(str(md_file), "My title", parent_id="parent-x")
 
@@ -226,13 +249,14 @@ def test_upload_and_convert_pipeline(tmp_path):
     assert ui.call_args.args[2] == "parent-x"
     ge.assert_called_once_with("# hi rewritten")
     cm.assert_called_once_with("# hi rewritten")
-    ud.assert_called_once_with(
-        b"yjs", "My title", "parent-x", "cookies", "csrf", excerpt="my excerpt"
+    cd.assert_called_once_with(
+        "My title", "parent-x", "cookies", "csrf", excerpt="my excerpt", doc_id=None
     )
+    uc.assert_called_once_with("doc-id", b"yjs", "cookies", "csrf")
     mv.assert_called_once_with("doc-id", "parent-x", "cookies", "csrf")
 
 
-def test_upload_and_convert_skips_move_when_upload_fails(tmp_path):
+def test_upload_and_convert_skips_content_and_move_when_creation_fails(tmp_path):
     md_file = tmp_path / "input.md"
     md_file.write_text("# hi", encoding="utf-8")
 
@@ -240,8 +264,10 @@ def test_upload_and_convert_skips_move_when_upload_fails(tmp_path):
          patch.object(main, "upload_local_images", return_value="x"), \
          patch.object(main, "generate_excerpt", return_value=None), \
          patch.object(main, "convert_markdown", return_value=b"y"), \
-         patch.object(main, "upload_document", return_value=None), \
+         patch.object(main, "create_document", return_value=None), \
+         patch.object(main, "update_document_content") as uc, \
          patch.object(main, "move_document") as mv:
         main.upload_and_convert(str(md_file), "T")
 
+    uc.assert_not_called()
     mv.assert_not_called()
